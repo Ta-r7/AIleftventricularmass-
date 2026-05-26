@@ -373,14 +373,20 @@ def ba_panel_relative(ax, pred, truth, title, xlim_ba, ylim_ba_pct,
 # --- 1. ABSOLUTE LVM - OLS-kalibratie ------------------------------------
 lvm_cmr  = results["lvm_cmr"].values
 lvm_pred = results["lvm_predicted"].values
+sex_arr  = results["sex"].values          # 0=vrouw, 1=man
 lvh_arr  = results["lvh_label_int"].values if has_lvh else None
 cmap     = LVH_COLOR_MAP if has_lvh else None
 
-calib_abs = LinearRegression().fit(lvm_pred.reshape(-1, 1), lvm_cmr)
-slope_abs, intercept_abs = float(calib_abs.coef_[0]), float(calib_abs.intercept_)
-lvm_pred_cal = calib_abs.predict(lvm_pred.reshape(-1, 1))
+# OLS met geslacht als covariaat (conform Khurshid et al.)
+X_abs = np.column_stack([lvm_pred, sex_arr])
+calib_abs = LinearRegression().fit(X_abs, lvm_cmr)
+coef_pred_abs = float(calib_abs.coef_[0])
+coef_sex_abs  = float(calib_abs.coef_[1])
+intercept_abs = float(calib_abs.intercept_)
+lvm_pred_cal  = calib_abs.predict(X_abs)
 results["lvm_predicted_calibrated"] = lvm_pred_cal
 
+# PB sensitivity - univariaat (PB ondersteunt geen covariaten)
 pb_slope_abs, pb_intercept_abs = passing_bablok(lvm_pred, lvm_cmr)
 lvm_pred_pb = pb_slope_abs * lvm_pred + pb_intercept_abs
 results["lvm_predicted_pb"] = lvm_pred_pb
@@ -402,8 +408,8 @@ print(f"  Gedeelde BA-y-as abs   : {ba_y_lim1[0]:.0f} - {ba_y_lim1[1]:.0f} g")
 print(f"  Gedeelde BA-y-as %     : {ba_y_lim1_pct[0]:.1f} - {ba_y_lim1_pct[1]:.1f} %")
 print(f"  CMR LVM                : {np.mean(lvm_cmr):.1f} +/- {np.std(lvm_cmr):.1f}  (range {lvm_cmr.min():.0f}-{lvm_cmr.max():.0f})")
 print(f"  Predicted LVM (ruw)    : {np.mean(lvm_pred):.1f} +/- {np.std(lvm_pred):.1f}  (range {lvm_pred.min():.0f}-{lvm_pred.max():.0f})")
-print(f"  OLS-formule            : CMR = {slope_abs:.3f} * predicted + {intercept_abs:+.1f}")
-print(f"  PB-formule  (sensit.)  : CMR = {pb_slope_abs:.3f} * predicted + {pb_intercept_abs:+.1f}")
+print(f"  OLS-formule            : CMR = {coef_pred_abs:.3f} * predicted + {coef_sex_abs:+.1f} * sex + {intercept_abs:+.1f}")
+print(f"  PB-formule  (sensit.)  : CMR = {pb_slope_abs:.3f} * predicted + {pb_intercept_abs:+.1f}  (zonder geslacht)")
 print_metrics(metrics(lvm_pred,      lvm_cmr, "Ruw"))
 print_metrics(metrics(lvm_pred_cal,  lvm_cmr, "OLS-gerecalibreerd"))
 print_metrics(metrics(lvm_pred_pb,   lvm_cmr, "PB-gerecalibreerd (sensitivity)"))
@@ -433,13 +439,19 @@ if has_indexed:
     if ix_mask.sum() >= 3:
         lvm_cmr_ix  = results.loc[ix_mask, "lvm_cmr_indexed"].values
         lvm_pred_ix = results.loc[ix_mask, "lvm_predicted_indexed"].values
+        sex_arr_ix  = results.loc[ix_mask, "sex"].values
         lvh_arr_ix  = results.loc[ix_mask, "lvh_label_int"].values if has_lvh else None
 
-        calib_ix = LinearRegression().fit(lvm_pred_ix.reshape(-1, 1), lvm_cmr_ix)
-        slope_ix, intercept_ix = float(calib_ix.coef_[0]), float(calib_ix.intercept_)
-        lvm_pred_ix_cal = calib_ix.predict(lvm_pred_ix.reshape(-1, 1))
+        # OLS met geslacht als covariaat (conform Khurshid et al.)
+        X_ix = np.column_stack([lvm_pred_ix, sex_arr_ix])
+        calib_ix = LinearRegression().fit(X_ix, lvm_cmr_ix)
+        coef_pred_ix = float(calib_ix.coef_[0])
+        coef_sex_ix  = float(calib_ix.coef_[1])
+        intercept_ix = float(calib_ix.intercept_)
+        lvm_pred_ix_cal = calib_ix.predict(X_ix)
         results.loc[ix_mask, "lvm_predicted_indexed_calibrated"] = lvm_pred_ix_cal
 
+        # PB sensitivity - univariaat (PB ondersteunt geen covariaten)
         pb_slope_ix, pb_intercept_ix = passing_bablok(lvm_pred_ix, lvm_cmr_ix)
         lvm_pred_ix_pb = pb_slope_ix * lvm_pred_ix + pb_intercept_ix
         results.loc[ix_mask, "lvm_predicted_indexed_pb"] = lvm_pred_ix_pb
@@ -462,8 +474,8 @@ if has_indexed:
         print(f"  Gedeelde BA-y-as %     : {ba_y_lim2_pct[0]:.1f} - {ba_y_lim2_pct[1]:.1f} %")
         print(f"  CMR LVM/BSA            : {np.mean(lvm_cmr_ix):.1f} +/- {np.std(lvm_cmr_ix):.1f}")
         print(f"  Predicted LVM/BSA (ruw): {np.mean(lvm_pred_ix):.1f} +/- {np.std(lvm_pred_ix):.1f}")
-        print(f"  OLS-formule            : CMR/BSA = {slope_ix:.3f} * predicted/BSA + {intercept_ix:+.1f}")
-        print(f"  PB-formule  (sensit.)  : CMR/BSA = {pb_slope_ix:.3f} * predicted/BSA + {pb_intercept_ix:+.1f}")
+        print(f"  OLS-formule            : CMR/BSA = {coef_pred_ix:.3f} * predicted/BSA + {coef_sex_ix:+.1f} * sex + {intercept_ix:+.1f}")
+        print(f"  PB-formule  (sensit.)  : CMR/BSA = {pb_slope_ix:.3f} * predicted/BSA + {pb_intercept_ix:+.1f}  (zonder geslacht)")
         print_metrics(metrics(lvm_pred_ix,     lvm_cmr_ix, "Geindexeerd ruw"))
         print_metrics(metrics(lvm_pred_ix_cal, lvm_cmr_ix, "Geindexeerd OLS-gerecalibreerd"))
         print_metrics(metrics(lvm_pred_ix_pb,  lvm_cmr_ix, "Geindexeerd PB-gerecalibreerd"))
