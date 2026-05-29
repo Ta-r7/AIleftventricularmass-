@@ -200,7 +200,7 @@ for i, o in enumerate(model.outputs if isinstance(model.outputs, list) else [mod
     print(f"  Output {i}: shape={o.shape}")
 
 print(f"\nLabels laden: {LABELS_CSV}")
-labels_df = pd.read_csv(LABELS_CSV)
+labels_df = pd.read_csv(LABELS_CSV, sep=None, engine="python")  # auto-detect delimiter (komma/tab/;)
 ecg_index = {Path(p).stem: str(p) for p in Path(ECG_DIR).glob("*.xml")}
 print(f"  ECG-bestanden gevonden: {len(ecg_index)}")
 print(f"  Labels: {len(labels_df)}")
