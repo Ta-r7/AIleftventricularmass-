@@ -187,6 +187,75 @@ def plot_mean_saliency_overlay(mean_ecg, mean_grad, title, save_path):
     fig.savefig(save_path, dpi=140, bbox_inches="tight")
     plt.close(fig)
 
+# --- KHURSHID-STIJL PLOT (replicate Figure 4 origineel artikel) -----------
+# Klinische 3x4 ECG-layout: rijen = limb leads + precordiaal, kolommen = paren
+KHURSHID_LAYOUT = [
+    ["I",   "aVR", "V1", "V4"],
+    ["II",  "aVL", "V2", "V5"],
+    ["III", "aVF", "V3", "V6"],
+]
+
+def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
+                                  display_window_ms=500):
+    """
+    Replicate Khurshid et al. Figure 4-stijl:
+      * Rode ECG-lijn op klinische schaal (mV)
+      * Blauwe kleur-schaduw (heatmap) als achtergrond = |saliency|
+      * R/S amplitude per lead (uV) linksboven
+      * Klinische 3x4 ECG-layout (I/II/III | aVR/aVL/aVF | V1-V3 | V4-V6)
+      * Eerste 500 ms (een hartslag) zoals in het origineel
+    ecg_norm: shape (5000, 12), in genormaliseerde eenheden (na /2000)
+    gradients: shape (5000, 12), ruwe RMS-genormaliseerde gradient
+    """
+    ecg_uv = ecg_norm * ECG_NORM            # terug naar microvolt
+    ecg_mv = ecg_uv / 1000.0                # naar mV voor weergave
+    sal_abs = np.abs(gaussian_filter(gradients, sigma=BLUR_SIGMA))
+
+    n_show = int(display_window_ms / 1000.0 * SAMPLE_RATE)  # 500 ms = 250 samples
+    n_show = min(n_show, ECG_SAMPLES)
+    t = np.arange(n_show) / SAMPLE_RATE * 1000.0  # ms
+
+    fig, axes = plt.subplots(3, 4, figsize=(18, 10), sharex=True)
+    for r in range(3):
+        for c in range(4):
+            ax = axes[r, c]
+            lead = KHURSHID_LAYOUT[r][c]
+            k = LEAD_ORDER.index(lead)
+            sal_lead = sal_abs[:n_show, k]
+            sal_norm = sal_lead / sal_lead.max() if sal_lead.max() > 0 else sal_lead
+            ecg_lead_mv = ecg_mv[:n_show, k]
+            ymin = float(ecg_lead_mv.min()) - 0.5
+            ymax = float(ecg_lead_mv.max()) + 0.5
+
+            # Blauwe heatmap achtergrond (saliency)
+            ax.imshow(
+                sal_norm[np.newaxis, :],
+                extent=[t[0], t[-1], ymin, ymax],
+                cmap="Blues", aspect="auto",
+                alpha=0.75, vmin=0, vmax=1, zorder=1,
+            )
+            # Rode ECG-lijn erbovenop
+            ax.plot(t, ecg_lead_mv, color="red", lw=0.9, zorder=2)
+
+            # R/S amplitudes in microvolt
+            R = int(round(float(ecg_uv[:n_show, k].max())))
+            S = int(round(abs(float(ecg_uv[:n_show, k].min()))))
+            ax.text(0.02, 0.97, f"R:{R} S:{S}",
+                    transform=ax.transAxes, fontsize=8, va="top",
+                    bbox=dict(boxstyle="round,pad=0.2",
+                              facecolor="white", edgecolor="none", alpha=0.8),
+                    zorder=3)
+            ax.set_title(f"strip_{lead}", fontsize=10)
+            ax.set_ylabel("mV", fontsize=8)
+            ax.set_ylim(ymin, ymax)
+            ax.tick_params(axis="both", labelsize=7)
+            if r == 2:
+                ax.set_xlabel("milliseconds", fontsize=8)
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
 # --- MAIN -----------------------------------------------------------------
 print("=" * 70)
 print("LVM-AI Saliency Mapping - Externe validatie")
@@ -284,6 +353,12 @@ for i, row in labels_df.iterrows():
                 f"Saliency (Regressie LVM) - {sid} - {tag}",
                 os.path.join(OUTPUT_DIR, f"saliency_reg_{tag}_{sid}.png"),
             )
+            # Khurshid-stijl Figure 4 replica
+            plot_saliency_khurshid_style(
+                norm[0], grad_reg,
+                f"LVM-AI saliency map - {sid} - {tag}",
+                os.path.join(OUTPUT_DIR, f"saliency_reg_KHURSHID_{tag}_{sid}.png"),
+            )
             saved_indiv["reg"][lvh_lbl] += 1
 
         # --- CLASSIFICATIE-HEAD ---
@@ -303,6 +378,11 @@ for i, row in labels_df.iterrows():
                     norm[0], grad_cls,
                     f"Saliency (Classificatie P(LVH)) - {sid} - {tag}",
                     os.path.join(OUTPUT_DIR, f"saliency_cls_{tag}_{sid}.png"),
+                )
+                plot_saliency_khurshid_style(
+                    norm[0], grad_cls,
+                    f"LVM-AI saliency map (P(LVH)) - {sid} - {tag}",
+                    os.path.join(OUTPUT_DIR, f"saliency_cls_KHURSHID_{tag}_{sid}.png"),
                 )
                 saved_indiv["cls"][lvh_lbl] += 1
 
