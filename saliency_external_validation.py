@@ -206,6 +206,12 @@ print(f"  ECG-bestanden gevonden: {len(ecg_index)}")
 print(f"  Labels: {len(labels_df)}")
 print(f"  Kolommen in CSV: {list(labels_df.columns)}")
 
+# Helpers voor Europese decimaalnotatie (komma -> punt)
+def to_float(v):
+    if isinstance(v, str):
+        v = v.replace(",", ".")
+    return float(v)
+
 # Auto-detect kolomnamen (case-insensitive)
 def find_col(df, candidates):
     cols_lower = {c.lower(): c for c in df.columns}
@@ -251,11 +257,11 @@ for i, row in labels_df.iterrows():
     try:
         ecg     = load_xml(ecg_index[sid])
         norm    = (ecg / ECG_NORM)[np.newaxis, ...].astype(np.float32)
-        age_n   = np.array([[(float(row[AGE_COL]) - AGE_MEAN) / AGE_STD]], dtype=np.float32)
-        bmi_n   = np.array([[(float(row[BMI_COL]) - BMI_MEAN) / BMI_STD]], dtype=np.float32)
-        sex_val = int(row[SEX_COL])
+        age_n   = np.array([[(to_float(row[AGE_COL]) - AGE_MEAN) / AGE_STD]], dtype=np.float32)
+        bmi_n   = np.array([[(to_float(row[BMI_COL]) - BMI_MEAN) / BMI_STD]], dtype=np.float32)
+        sex_val = int(to_float(row[SEX_COL]))
         sex     = np.array([[1 - sex_val, sex_val]], dtype=np.float32)
-        lvh_lbl = int(row[LVH_COL]) if LVH_COL is not None else 0
+        lvh_lbl = int(to_float(row[LVH_COL])) if LVH_COL is not None else 0
 
         # --- REGRESSIE-HEAD ---
         grad_reg = compute_saliency(model, norm, age_n, sex, bmi_n,
