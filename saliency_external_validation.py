@@ -99,9 +99,12 @@ def compute_saliency(model, ecg_in, age_in, sex_in, bmi_in, head_index, output_i
     """
     import tensorflow as tf
     ecg_tf = tf.convert_to_tensor(ecg_in)
+    age_tf = tf.convert_to_tensor(age_in)
+    sex_tf = tf.convert_to_tensor(sex_in)
+    bmi_tf = tf.convert_to_tensor(bmi_in)
     with tf.GradientTape() as tape:
         tape.watch(ecg_tf)
-        outputs = model([ecg_tf, age_in, sex_in, bmi_in], training=False)
+        outputs = model([ecg_tf, age_tf, sex_tf, bmi_tf], training=False)
         if isinstance(outputs, (list, tuple)):
             target = outputs[head_index][:, output_index]
         else:
