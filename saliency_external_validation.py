@@ -204,6 +204,26 @@ labels_df = pd.read_csv(LABELS_CSV)
 ecg_index = {Path(p).stem: str(p) for p in Path(ECG_DIR).glob("*.xml")}
 print(f"  ECG-bestanden gevonden: {len(ecg_index)}")
 print(f"  Labels: {len(labels_df)}")
+print(f"  Kolommen in CSV: {list(labels_df.columns)}")
+
+# Auto-detect kolomnamen (case-insensitive)
+def find_col(df, candidates):
+    cols_lower = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in cols_lower:
+            return cols_lower[cand.lower()]
+    return None
+
+ID_COL  = find_col(labels_df, ["sample_id", "id", "patient_id", "mrn", "study_id", "filename", "subject_id"])
+AGE_COL = find_col(labels_df, ["age", "leeftijd", "age_years"])
+BMI_COL = find_col(labels_df, ["bmi", "body_mass_index"])
+SEX_COL = find_col(labels_df, ["sex", "geslacht", "gender", "male"])
+LVH_COL = find_col(labels_df, ["LVH", "lvh", "lvh_label", "lvh_status"])
+
+if ID_COL is None:
+    raise KeyError(f"Geen ID-kolom gevonden in CSV. Beschikbaar: {list(labels_df.columns)}. "
+                   f"Voeg een kolom toe met naam 'sample_id' (of pas find_col aan).")
+print(f"  Gebruik kolommen -> id:{ID_COL}, age:{AGE_COL}, bmi:{BMI_COL}, sex:{SEX_COL}, LVH:{LVH_COL}")
 
 # Accumulatoren per groep (LVH+/LVH-) en per head (regressie/classificatie)
 # Voor domain-shift evaluatie
@@ -225,17 +245,17 @@ print(f"\nHas classification head: {has_classification}")
 n_proc, n_err = 0, 0
 print("\nSaliency-berekening per ECG...")
 for i, row in labels_df.iterrows():
-    sid = str(row["sample_id"])
+    sid = str(row[ID_COL])
     if sid not in ecg_index:
         n_err += 1; continue
     try:
         ecg     = load_xml(ecg_index[sid])
         norm    = (ecg / ECG_NORM)[np.newaxis, ...].astype(np.float32)
-        age_n   = np.array([[(float(row["age"]) - AGE_MEAN) / AGE_STD]], dtype=np.float32)
-        bmi_n   = np.array([[(float(row["bmi"]) - BMI_MEAN) / BMI_STD]], dtype=np.float32)
-        sex_val = int(row["sex"])
+        age_n   = np.array([[(float(row[AGE_COL]) - AGE_MEAN) / AGE_STD]], dtype=np.float32)
+        bmi_n   = np.array([[(float(row[BMI_COL]) - BMI_MEAN) / BMI_STD]], dtype=np.float32)
+        sex_val = int(row[SEX_COL])
         sex     = np.array([[1 - sex_val, sex_val]], dtype=np.float32)
-        lvh_lbl = int(row.get("LVH", 0))
+        lvh_lbl = int(row[LVH_COL]) if LVH_COL is not None else 0
 
         # --- REGRESSIE-HEAD ---
         grad_reg = compute_saliency(model, norm, age_n, sex, bmi_n,
