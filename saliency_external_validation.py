@@ -215,6 +215,10 @@ acc = {
 }
 saved_indiv = {"reg": {1: 0, 0: 0}, "cls": {1: 0, 0: 0}}
 
+# Per-patient dominante lead (zoals Khurshid et al.: "V5 in 97.4%, V4 in 2.4%, V1 in 0.3%")
+dominant_leads = {"reg": [], "cls": []}     # lijsten van (sample_id, dominant_lead, lvh_lbl)
+per_patient_imp = {"reg": [], "cls": []}    # rij per patient met mean |saliency| per lead
+
 has_classification = n_outputs >= 2
 print(f"\nHas classification head: {has_classification}")
 
@@ -239,6 +243,11 @@ for i, row in labels_df.iterrows():
         acc["reg"][lvh_lbl]["ecg"]  += norm[0]
         acc["reg"][lvh_lbl]["grad"] += grad_reg
         acc["reg"][lvh_lbl]["n"]   += 1
+        # Per-patient lead-importance + dominante lead
+        imp_per_lead_reg = np.abs(grad_reg).mean(axis=0)
+        dom_lead_reg = LEAD_ORDER[int(np.argmax(imp_per_lead_reg))]
+        dominant_leads["reg"].append((sid, dom_lead_reg, lvh_lbl))
+        per_patient_imp["reg"].append([sid, lvh_lbl] + list(imp_per_lead_reg))
         if saved_indiv["reg"][lvh_lbl] < N_INDIV_PLOTS:
             tag = "LVHpos" if lvh_lbl == 1 else "LVHneg"
             plot_saliency_per_lead(
@@ -255,6 +264,10 @@ for i, row in labels_df.iterrows():
             acc["cls"][lvh_lbl]["ecg"]  += norm[0]
             acc["cls"][lvh_lbl]["grad"] += grad_cls
             acc["cls"][lvh_lbl]["n"]   += 1
+            imp_per_lead_cls = np.abs(grad_cls).mean(axis=0)
+            dom_lead_cls = LEAD_ORDER[int(np.argmax(imp_per_lead_cls))]
+            dominant_leads["cls"].append((sid, dom_lead_cls, lvh_lbl))
+            per_patient_imp["cls"].append([sid, lvh_lbl] + list(imp_per_lead_cls))
             if saved_indiv["cls"][lvh_lbl] < N_INDIV_PLOTS:
                 tag = "LVHpos" if lvh_lbl == 1 else "LVHneg"
                 plot_saliency_per_lead(
@@ -335,5 +348,61 @@ for head_key in per_lead_importance:
 imp_df = pd.DataFrame(rows)
 imp_df.to_csv(os.path.join(OUTPUT_DIR, "per_lead_saliency_importance.csv"), index=False)
 print(f"\nTabel weggeschreven: {os.path.join(OUTPUT_DIR, 'per_lead_saliency_importance.csv')}")
-print(f"Output-map: {OUTPUT_DIR}/")
+
+# --- DOMINANTE LEAD PER PATIENT (replicate Khurshid: "V5 in 97.4%, V4 in 2.4%, V1 in 0.3%") ---
+print("\n" + "=" * 70)
+print("DOMINANTE LEAD PER PATIENT (frequentie-analyse)")
+print("=" * 70)
+
+for head_key, head_label in [("reg", "Regressie (LVM)"),
+                             ("cls", "Classificatie (P(LVH))")]:
+    if head_key == "cls" and not has_classification: continue
+    dl = dominant_leads[head_key]
+    if not dl: continue
+    print(f"\n--- {head_label} (n={len(dl)} patienten) ---")
+
+    # Frequentie-tabel: hele cohort
+    dom_df = pd.DataFrame(dl, columns=["sample_id", "dominant_lead", "LVH"])
+    counts = dom_df["dominant_lead"].value_counts()
+    pct    = (counts / len(dom_df) * 100).round(2)
+    print("\n  Hele cohort:")
+    for lead, n in counts.items():
+        print(f"    {lead:<5}  n={n:>4}  ({pct[lead]:.1f}%)")
+
+    # Frequentie-tabel: LVH+ / LVH-
+    for grp_lbl, grp_name in [(1, "LVH+"), (0, "LVH-")]:
+        sub = dom_df[dom_df["LVH"] == grp_lbl]
+        if len(sub) == 0: continue
+        counts_s = sub["dominant_lead"].value_counts()
+        pct_s    = (counts_s / len(sub) * 100).round(2)
+        print(f"\n  {grp_name} (n={len(sub)}):")
+        for lead, n in counts_s.items():
+            print(f"    {lead:<5}  n={n:>4}  ({pct_s[lead]:.1f}%)")
+
+    dom_df.to_csv(os.path.join(OUTPUT_DIR, f"dominant_lead_per_patient_{head_key}.csv"), index=False)
+
+    # Bar chart: frequentie dominante lead in cohort
+    fig, ax = plt.subplots(figsize=(10, 5))
+    cohort_counts = dom_df["dominant_lead"].value_counts().reindex(LEAD_ORDER, fill_value=0)
+    cohort_pct    = cohort_counts / len(dom_df) * 100
+    ax.bar(np.arange(len(LEAD_ORDER)), cohort_pct.values, color="dimgray")
+    ax.set_xticks(np.arange(len(LEAD_ORDER)))
+    ax.set_xticklabels(LEAD_ORDER)
+    ax.set_ylabel("% patienten waar lead dominant is")
+    ax.set_title(f"Dominante lead per patient - {head_label} (n={len(dom_df)})")
+    ax.grid(axis="y", alpha=0.3)
+    for k, v in enumerate(cohort_pct.values):
+        if v > 0.5:
+            ax.text(k, v + 0.5, f"{v:.1f}%", ha="center", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUTPUT_DIR, f"dominant_lead_frequency_{head_key}.png"),
+                dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+    # Volledige per-patient lead-importance matrix
+    cols = ["sample_id", "LVH"] + LEAD_ORDER
+    pat_imp_df = pd.DataFrame(per_patient_imp[head_key], columns=cols)
+    pat_imp_df.to_csv(os.path.join(OUTPUT_DIR, f"per_patient_lead_importance_{head_key}.csv"), index=False)
+
+print(f"\nOutput-map: {OUTPUT_DIR}/")
 print("\nKlaar.")
