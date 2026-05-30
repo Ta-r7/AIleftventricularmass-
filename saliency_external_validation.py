@@ -154,8 +154,13 @@ def detect_r_peak(ecg_norm):
 def accumulate_aligned(acc_entry, ecg_norm, grad, r_idx, target_sample=R_PEAK_TARGET):
     """Voeg aligned ECG + gradient toe aan accumulator.
     Verschuift signaal zodat R-piek op target_sample komt; zet wrap-zone op 0.
-    Retourneert True bij succes, False als r_idx None is."""
+    Retourneert True bij succes, False als r_idx None is of grad NaN/Inf bevat."""
     if r_idx is None:
+        return False
+    # Skip patienten met NaN/Inf gradienten (numerieke instabiliteit, vooral bij
+    # classificatie-head wanneer P(LVH=1) zeer dicht bij 0 of 1 ligt). Anders
+    # polluteert 1 NaN-waarde de hele accumulator.
+    if not np.all(np.isfinite(grad)) or not np.all(np.isfinite(ecg_norm)):
         return False
     shift = target_sample - r_idx
     ecg_shifted = np.roll(ecg_norm, shift, axis=0)
