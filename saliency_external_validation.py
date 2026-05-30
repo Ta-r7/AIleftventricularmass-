@@ -122,6 +122,52 @@ def saliency_blurred_and_scaled(gradients, blur_radius=BLUR_SIGMA, max_value=1.0
     blurred -= blurred.mean()
     return blurred
 
+# --- R-PIEK DETECTIE + UITLIJNING (voor mean plot) ------------------------
+# Zonder uitlijning kanselleren QRS-complexen elkaar bij averaging omdat
+# elke patient zijn QRS op een andere tijdspositie heeft. Door alle ECGs
+# zo te verschuiven dat de R-piek (lead II) op target_sample valt, krijgen
+# we een herkenbare gemiddelde QRS-morfologie en zinnige mean saliency.
+R_PEAK_LEAD_IDX  = 1     # lead II - meest betrouwbare R-piek
+R_PEAK_SEARCH    = 1500  # zoek in eerste 3 seconden
+R_PEAK_TARGET    = 125   # plaats R-piek op sample 125 = ms 250 (midden van 500ms display)
+
+def detect_r_peak(ecg_norm):
+    """Sterkste positieve R-piek in lead II (eerste ~3s). Retourneert sample-index of None."""
+    from scipy.signal import find_peaks
+    signal = ecg_norm[:R_PEAK_SEARCH, R_PEAK_LEAD_IDX].astype(np.float64)
+    s_std = float(np.std(signal))
+    if s_std < 1e-9:
+        return None
+    peaks, props = find_peaks(signal, distance=200, prominence=s_std * 1.5)
+    if len(peaks) == 0:
+        # Lead II R-piek is meestal positief; fallback op absoluut signaal
+        peaks, props = find_peaks(np.abs(signal), distance=200, prominence=s_std * 1.5)
+        if len(peaks) == 0:
+            return None
+    if "prominences" in props and len(props["prominences"]) > 0:
+        return int(peaks[int(np.argmax(props["prominences"]))])
+    return int(peaks[0])
+
+def accumulate_aligned(acc_entry, ecg_norm, grad, r_idx, target_sample=R_PEAK_TARGET):
+    """Voeg aligned ECG + gradient toe aan accumulator.
+    Verschuift signaal zodat R-piek op target_sample komt; zet wrap-zone op 0.
+    Retourneert True bij succes, False als r_idx None is."""
+    if r_idx is None:
+        return False
+    shift = target_sample - r_idx
+    ecg_shifted = np.roll(ecg_norm, shift, axis=0)
+    grad_shifted = np.roll(grad, shift, axis=0)
+    if shift > 0:
+        ecg_shifted[:shift] = 0
+        grad_shifted[:shift] = 0
+    elif shift < 0:
+        ecg_shifted[shift:] = 0
+        grad_shifted[shift:] = 0
+    acc_entry["ecg"]  += ecg_shifted
+    acc_entry["grad"] += grad_shifted
+    acc_entry["n"]   += 1
+    return True
+
 # --- PLOTTING (3x4 grid per lead, identiek aan ml4h-stijl) ----------------
 def plot_saliency_per_lead(ecg, gradients, title, save_path):
     """ECG (zwart) + saliency (rood) per lead, 3x4 grid."""
@@ -334,7 +380,7 @@ per_patient_imp = {"reg": [], "cls": []}    # rij per patient met mean |saliency
 has_classification = n_outputs >= 2
 print(f"\nHas classification head: {has_classification}")
 
-n_proc, n_err = 0, 0
+n_proc, n_err, n_aligned, n_align_fail = 0, 0, 0, 0
 print("\nSaliency-berekening per ECG...")
 for i, row in labels_df.iterrows():
     sid = str(row[ID_COL])
@@ -349,13 +395,19 @@ for i, row in labels_df.iterrows():
         sex     = np.array([[1 - sex_val, sex_val]], dtype=np.float32)
         lvh_lbl = int(to_float(row[LVH_COL])) if LVH_COL is not None else 0
 
+        # R-piek detectie (eenmaal per patient, gebruikt voor beide heads)
+        r_idx = detect_r_peak(norm[0])
+        if r_idx is None:
+            n_align_fail += 1
+        else:
+            n_aligned += 1
+
         # --- REGRESSIE-HEAD ---
         grad_reg = compute_saliency(model, norm, age_n, sex, bmi_n,
                                     head_index=0, output_index=0)
-        acc["reg"][lvh_lbl]["ecg"]  += norm[0]
-        acc["reg"][lvh_lbl]["grad"] += grad_reg
-        acc["reg"][lvh_lbl]["n"]   += 1
-        # Per-patient lead-importance + dominante lead
+        # Accumulator update met aligned data (skip als R-piek detectie mislukt)
+        accumulate_aligned(acc["reg"][lvh_lbl], norm[0], grad_reg, r_idx)
+        # Per-patient lead-importance + dominante lead (uit niet-uitgelijnde data)
         imp_per_lead_reg = np.abs(grad_reg).mean(axis=0)
         dom_lead_reg = LEAD_ORDER[int(np.argmax(imp_per_lead_reg))]
         dominant_leads["reg"].append((sid, dom_lead_reg, lvh_lbl))
@@ -367,7 +419,7 @@ for i, row in labels_df.iterrows():
                 f"Saliency (Regressie LVM) - {sid} - {tag}",
                 os.path.join(OUTPUT_DIR, f"saliency_reg_{tag}_{sid}.png"),
             )
-            # Khurshid-stijl Figure 4 replica
+            # Khurshid-stijl Figure 4 replica (individuele plots NIET aligned)
             plot_saliency_khurshid_style(
                 norm[0], grad_reg,
                 f"LVM-AI saliency map - {sid} - {tag}",
@@ -379,9 +431,7 @@ for i, row in labels_df.iterrows():
         if has_classification:
             grad_cls = compute_saliency(model, norm, age_n, sex, bmi_n,
                                         head_index=1, output_index=1)  # P(LVH=1)
-            acc["cls"][lvh_lbl]["ecg"]  += norm[0]
-            acc["cls"][lvh_lbl]["grad"] += grad_cls
-            acc["cls"][lvh_lbl]["n"]   += 1
+            accumulate_aligned(acc["cls"][lvh_lbl], norm[0], grad_cls, r_idx)
             imp_per_lead_cls = np.abs(grad_cls).mean(axis=0)
             dom_lead_cls = LEAD_ORDER[int(np.argmax(imp_per_lead_cls))]
             dominant_leads["cls"].append((sid, dom_lead_cls, lvh_lbl))
@@ -409,6 +459,7 @@ for i, row in labels_df.iterrows():
             print(f"  Fout bij {sid}: {e}")
 
 print(f"\nKlaar. Verwerkt: {n_proc}, fouten/mismatches: {n_err}")
+print(f"R-piek detectie geslaagd: {n_aligned} / {n_proc} (mislukt: {n_align_fail})")
 
 # --- AGGREGATIES PER GROEP -------------------------------------------------
 def finalize_group(grp):
