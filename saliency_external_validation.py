@@ -115,7 +115,10 @@ def compute_saliency(model, ecg_in, age_in, sex_in, bmi_in, head_index, output_i
 
 # --- POST-PROCESSING (mirrors ml4h/plots.py:_saliency_blurred_and_scaled) ---
 def saliency_blurred_and_scaled(gradients, blur_radius=BLUR_SIGMA, max_value=1.0):
-    blurred = gaussian_filter(gradients, sigma=blur_radius)
+    # BELANGRIJK: alleen blur langs tijd-as (axis 0), niet langs lead-as (axis 1).
+    # Zonder (sigma, 0) tuple zou scipy de blur ook over leads heen toepassen,
+    # waardoor adjacent leads (bv. I, II, III) bijna identieke patronen krijgen.
+    blurred = gaussian_filter(gradients, sigma=(blur_radius, 0))
     mn, mx = blurred.min(), blurred.max()
     if mx - mn > 1e-12:
         blurred = (blurred - mn) / (mx - mn) * max_value
@@ -257,7 +260,8 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
     """
     ecg_uv = ecg_norm * ECG_NORM            # terug naar microvolt
     ecg_mv = ecg_uv / 1000.0                # naar mV voor weergave
-    sal_abs = np.abs(gaussian_filter(gradients, sigma=BLUR_SIGMA))
+    # Blur alleen langs tijd-as om cross-lead smearing te voorkomen
+    sal_abs = np.abs(gaussian_filter(gradients, sigma=(BLUR_SIGMA, 0)))
 
     n_show = int(display_window_ms / 1000.0 * SAMPLE_RATE)  # 500 ms = 250 samples
     n_show = min(n_show, ECG_SAMPLES)
