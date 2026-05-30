@@ -255,9 +255,12 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
       * Klinische 3x4 ECG-layout (I/II/III | aVR/aVL/aVF | V1-V3 | V4-V6)
       * Eerste 500 ms (een hartslag) zoals in het origineel
       * Y-as vast -4 tot +4 mV, ticks op -2, 0, 2 (conform Khurshid Figure 4)
+      * Per-panel colorbar (High/Low) voor Salience-intensiteit
     ecg_norm: shape (5000, 12), in genormaliseerde eenheden (na /2000)
     gradients: shape (5000, 12), ruwe RMS-genormaliseerde gradient
     """
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
     ecg_uv = ecg_norm * ECG_NORM            # terug naar microvolt
     ecg_mv = ecg_uv / 1000.0                # naar mV voor weergave
     # Blur alleen langs tijd-as om cross-lead smearing te voorkomen
@@ -267,7 +270,7 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
     n_show = min(n_show, ECG_SAMPLES)
     t = np.arange(n_show) / SAMPLE_RATE * 1000.0  # ms
 
-    fig, axes = plt.subplots(3, 4, figsize=(18, 10), sharex=True, sharey=True)
+    fig, axes = plt.subplots(3, 4, figsize=(20, 10), sharex=True, sharey=True)
     for r in range(3):
         for c in range(4):
             ax = axes[r, c]
@@ -278,7 +281,7 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
             ecg_lead_mv = ecg_mv[:n_show, k]
 
             # Blauwe heatmap achtergrond (saliency) - vult de hele y-range
-            ax.imshow(
+            im = ax.imshow(
                 sal_norm[np.newaxis, :],
                 extent=[t[0], t[-1], y_min, y_max],
                 cmap="Blues", aspect="auto",
@@ -302,6 +305,15 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
             ax.tick_params(axis="both", labelsize=7)
             if r == 2:
                 ax.set_xlabel("milliseconds", fontsize=8)
+
+            # Per-panel Salience colorbar (High/Low) conform Khurshid Figure 4
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="2.5%", pad=0.04)
+            cbar = fig.colorbar(im, cax=cax, ticks=[0, 1])
+            cbar.ax.set_yticklabels(["Low", "High"], fontsize=6)
+            cbar.set_label("Salience", fontsize=7, rotation=270, labelpad=8)
+            cbar.ax.tick_params(labelsize=6, length=2)
+            cbar.outline.set_linewidth(0.3)
     fig.suptitle(title, fontsize=12)
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
