@@ -196,7 +196,8 @@ KHURSHID_LAYOUT = [
 ]
 
 def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
-                                  display_window_ms=500):
+                                  display_window_ms=500,
+                                  y_min=-4.0, y_max=4.0, y_ticks=(-2, 0, 2)):
     """
     Replicate Khurshid et al. Figure 4-stijl:
       * Rode ECG-lijn op klinische schaal (mV)
@@ -204,6 +205,7 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
       * R/S amplitude per lead (uV) linksboven
       * Klinische 3x4 ECG-layout (I/II/III | aVR/aVL/aVF | V1-V3 | V4-V6)
       * Eerste 500 ms (een hartslag) zoals in het origineel
+      * Y-as vast -4 tot +4 mV, ticks op -2, 0, 2 (conform Khurshid Figure 4)
     ecg_norm: shape (5000, 12), in genormaliseerde eenheden (na /2000)
     gradients: shape (5000, 12), ruwe RMS-genormaliseerde gradient
     """
@@ -215,7 +217,7 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
     n_show = min(n_show, ECG_SAMPLES)
     t = np.arange(n_show) / SAMPLE_RATE * 1000.0  # ms
 
-    fig, axes = plt.subplots(3, 4, figsize=(18, 10), sharex=True)
+    fig, axes = plt.subplots(3, 4, figsize=(18, 10), sharex=True, sharey=True)
     for r in range(3):
         for c in range(4):
             ax = axes[r, c]
@@ -224,13 +226,11 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
             sal_lead = sal_abs[:n_show, k]
             sal_norm = sal_lead / sal_lead.max() if sal_lead.max() > 0 else sal_lead
             ecg_lead_mv = ecg_mv[:n_show, k]
-            ymin = float(ecg_lead_mv.min()) - 0.5
-            ymax = float(ecg_lead_mv.max()) + 0.5
 
-            # Blauwe heatmap achtergrond (saliency)
+            # Blauwe heatmap achtergrond (saliency) - vult de hele y-range
             ax.imshow(
                 sal_norm[np.newaxis, :],
-                extent=[t[0], t[-1], ymin, ymax],
+                extent=[t[0], t[-1], y_min, y_max],
                 cmap="Blues", aspect="auto",
                 alpha=0.75, vmin=0, vmax=1, zorder=1,
             )
@@ -247,7 +247,8 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
                     zorder=3)
             ax.set_title(f"strip_{lead}", fontsize=10)
             ax.set_ylabel("mV", fontsize=8)
-            ax.set_ylim(ymin, ymax)
+            ax.set_ylim(y_min, y_max)
+            ax.set_yticks(list(y_ticks))
             ax.tick_params(axis="both", labelsize=7)
             if r == 2:
                 ax.set_xlabel("milliseconds", fontsize=8)
@@ -255,6 +256,19 @@ def plot_saliency_khurshid_style(ecg_norm, gradients, title, save_path,
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+def plot_mean_saliency_khurshid_style(mean_ecg_norm, mean_grad, title, save_path,
+                                       display_window_ms=500,
+                                       y_min=-4.0, y_max=4.0, y_ticks=(-2, 0, 2)):
+    """
+    Khurshid-stijl voor GEAGGREGEERDE saliency over een groep (bv. alle LVH+).
+    Zelfde visualisatie als plot_saliency_khurshid_style maar met gemiddelden.
+    """
+    plot_saliency_khurshid_style(
+        mean_ecg_norm, mean_grad, title, save_path,
+        display_window_ms=display_window_ms,
+        y_min=y_min, y_max=y_max, y_ticks=y_ticks,
+    )
 
 # --- MAIN -----------------------------------------------------------------
 print("=" * 70)
@@ -416,12 +430,23 @@ for head_key, head_label in [("reg", "Regressie (LVM)"),
             f"Mean saliency LVH+ (n={acc[head_key][1]['n']}) - {head_label}",
             os.path.join(OUTPUT_DIR, f"mean_saliency_{head_key}_LVHpos.png"),
         )
+        # Khurshid-stijl mean plot (Figure 4-stijl over de groep)
+        plot_mean_saliency_khurshid_style(
+            mean_ecg_pos, mean_grad_pos,
+            f"Mean LVM-AI saliency map - LVH+ (n={acc[head_key][1]['n']}) - {head_label}",
+            os.path.join(OUTPUT_DIR, f"mean_saliency_KHURSHID_{head_key}_LVHpos.png"),
+        )
     if mean_grad_neg is not None:
         print(f"  LVH-: n={acc[head_key][0]['n']}")
         plot_mean_saliency_overlay(
             mean_ecg_neg, mean_grad_neg,
             f"Mean saliency LVH- (n={acc[head_key][0]['n']}) - {head_label}",
             os.path.join(OUTPUT_DIR, f"mean_saliency_{head_key}_LVHneg.png"),
+        )
+        plot_mean_saliency_khurshid_style(
+            mean_ecg_neg, mean_grad_neg,
+            f"Mean LVM-AI saliency map - LVH- (n={acc[head_key][0]['n']}) - {head_label}",
+            os.path.join(OUTPUT_DIR, f"mean_saliency_KHURSHID_{head_key}_LVHneg.png"),
         )
 
     # Per-lead importance (mean abs saliency over tijd)
